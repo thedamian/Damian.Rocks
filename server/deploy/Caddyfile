@@ -1,0 +1,5 @@
+# /etc/caddy/Caddyfile — automatic HTTPS; WebSockets (/ws, /display) are proxied transparently.
+damian.rocks, www.damian.rocks {
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:3000
+}

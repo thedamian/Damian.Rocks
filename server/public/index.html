@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#14112b" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <title>Damian.Rocks</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/styles.css" />
+    <script type="module" src="/js/app.js"></script>
+  </head>
+  <body>
+    <main>
+      <section id="loading-screen" class="screen">
+        <div class="spinner" aria-label="Loading"></div>
+      </section>
+
+      <section id="name-screen" class="screen" hidden>
+        <div class="card">
+          <div class="wave" aria-hidden="true">👋</div>
+          <h1>Welcome to the show!</h1>
+          <p class="muted">What should we call you?</p>
+          <form id="name-form" autocomplete="on">
+            <input id="name-input" name="name" type="text" maxlength="40" autocomplete="given-name"
+                   placeholder="Your name" required enterkeyhint="go" />
+            <button type="submit" class="primary">Join</button>
+          </form>
+          <p id="name-error" class="error" role="alert" hidden></p>
+        </div>
+      </section>
+
+      <section id="react-screen" class="screen" hidden>
+        <header class="topbar">
+          <div class="hello">Hi, <strong id="who"></strong></div>
+          <button id="change-name" type="button" class="link">Not you?</button>
+        </header>
+        <p id="status" class="status" data-state="connecting"><span class="dot"></span><span id="status-text">Connecting…</span></p>
+        <div id="grid" class="grid" role="group" aria-label="Reactions"></div>
+        <p class="muted hint">Tap an emoji to send it to the big screen</p>
+        <p id="toast" class="toast" role="status" hidden></p>
+      </section>
+    </main>
+    <div id="sky" aria-hidden="true"></div>
+  </body>
+</html>

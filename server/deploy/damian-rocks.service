@@ -1,0 +1,22 @@
+# /etc/systemd/system/damian-rocks.service
+[Unit]
+Description=Damian.Rocks reactions server
+After=network.target
+
+[Service]
+Type=simple
+User=damianrocks
+WorkingDirectory=/opt/damian-rocks/server
+Environment=NODE_ENV=production
+Environment=PORT=3000
+Environment=HOST=127.0.0.1
+ExecStart=/usr/bin/node dist/server.js
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

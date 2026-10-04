@@ -1,0 +1,23 @@
+{
+  "name": "damian-rocks-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Damian.Rocks audience reactions: mobile web app + WebSocket hub for the desktop overlay.",
+  "type": "module",
+  "engines": {
+    "node": ">=20.11"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && tsc -p tsconfig.client.json",
+    "start": "node dist/server.js",
+    "dev": "npm run build && node dist/server.js"
+  },
+  "dependencies": {
+    "ws": "^8.22.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.4",
+    "@types/ws": "^8.18.2",
+    "typescript": "^7.0.2"
+  }
+}
