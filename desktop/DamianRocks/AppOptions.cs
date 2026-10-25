@@ -3,17 +3,20 @@ using System.Net;
 
 namespace DamianRocks;
 
-public sealed record AppOptions(Uri DisplayUri, bool IsDefaultServer)
+public sealed record AppOptions(Uri DisplayUri, bool IsDefaultServer, string? Key = null)
 {
     public const string DefaultServer = "damian.rocks";
 
     public const string Usage =
-        "DamianRocks.exe [--server <url>]\n\n" +
-        "Connects to wss://damian.rocks/display by default.\n\n" +
+        "DamianRocks.exe [--server <url>] [--key <presenter key>]\n\n" +
+        "Connects to wss://damian.rocks/display by default.\n" +
+        "--key is the server's DISPLAY_KEY; it lets this PC take audience questions\n" +
+        "(it's remembered, so you only need to pass it once).\n\n" +
         "Examples:\n" +
-        "  DamianRocks.exe --server localhost:3000\n" +
-        "  DamianRocks.exe --server http://192.168.1.20:3000\n" +
-        "  DamianRocks.exe --server wss://staging.damian.rocks/display";
+        "  DamianRocks.exe --server localhost:3002\n" +
+        "  DamianRocks.exe --server http://192.168.1.20:3002\n" +
+        "  DamianRocks.exe --server wss://staging.damian.rocks/display\n" +
+        "  DamianRocks.exe --key my-secret";
 
     /// <summary>Base http(s) URL of the server, used to resolve relative image paths.</summary>
     public Uri HttpBase => new UriBuilder(DisplayUri)
@@ -29,6 +32,7 @@ public sealed record AppOptions(Uri DisplayUri, bool IsDefaultServer)
         error = null;
         showHelp = false;
         string? server = null;
+        string? key = null;
 
         for (int i = 0; i < args.Length; i++)
         {
@@ -48,6 +52,15 @@ public sealed record AppOptions(Uri DisplayUri, bool IsDefaultServer)
             {
                 server = arg[(arg.IndexOf('=') + 1)..];
             }
+            else if (arg is "--key" or "-k")
+            {
+                if (i + 1 >= args.Length) { error = $"Missing value for {arg}."; return null; }
+                key = args[++i];
+            }
+            else if (arg.StartsWith("--key=", StringComparison.OrdinalIgnoreCase))
+            {
+                key = arg[(arg.IndexOf('=') + 1)..];
+            }
             else if (!arg.StartsWith('-') && server is null)
             {
                 server = arg;
@@ -61,7 +74,7 @@ public sealed record AppOptions(Uri DisplayUri, bool IsDefaultServer)
 
         try
         {
-            return new AppOptions(NormalizeServer(server ?? DefaultServer), server is null);
+            return new AppOptions(NormalizeServer(server ?? DefaultServer), server is null, string.IsNullOrWhiteSpace(key) ? null : key.Trim());
         }
         catch (Exception ex)
         {
@@ -71,7 +84,7 @@ public sealed record AppOptions(Uri DisplayUri, bool IsDefaultServer)
     }
 
     /// <summary>
-    /// Accepts "damian.rocks", "localhost:3000", "http(s)://host", or "ws(s)://host/path"
+    /// Accepts "damian.rocks", "localhost:3002", "http(s)://host", or "ws(s)://host/path"
     /// and returns the WebSocket URL of the display endpoint.
     /// </summary>
     public static Uri NormalizeServer(string input)

@@ -8,8 +8,10 @@ Type=simple
 User=damianrocks
 WorkingDirectory=/opt/damian-rocks/server
 Environment=NODE_ENV=production
-Environment=PORT=3000
+Environment=PORT=3002
 Environment=HOST=127.0.0.1
+# Q&A presenter key (the desktop app passes it with --key)
+#Environment=DISPLAY_KEY=a-long-random-secret
 ExecStart=/usr/bin/node dist/server.js
 Restart=always
 RestartSec=3

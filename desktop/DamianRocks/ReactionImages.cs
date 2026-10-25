@@ -23,6 +23,8 @@ public sealed class ReactionImages
     public ReactionImages(Uri httpBase) => _httpBase = httpBase;
 
     public static readonly string[] BundledEmojis = { "😁", "😂", "👍🏽", "👎🏽", "💩", "❓", "🖐🏽" };
+    /// <summary>The raised hand used for the questions list (not a floating reaction).</summary>
+    public const string HandEmoji = "🖐🏽";
 
     public Task<ImageSource?> GetAsync(ReactionMessage reaction)
     {

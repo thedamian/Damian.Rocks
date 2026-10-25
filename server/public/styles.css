@@ -147,7 +147,6 @@ button { font: inherit; cursor: pointer; touch-action: manipulation; }
   gap: 14px;
   padding: 8px 0;
 }
-@media (min-width: 480px) { .grid { grid-template-columns: repeat(4, 1fr); } }
 
 .reaction {
   aspect-ratio: 1;
@@ -172,16 +171,140 @@ button { font: inherit; cursor: pointer; touch-action: manipulation; }
 .toast {
   position: fixed;
   left: 50%;
-  bottom: max(24px, env(safe-area-inset-bottom));
+  top: max(14px, env(safe-area-inset-top));
   transform: translateX(-50%);
   margin: 0;
   padding: 10px 18px;
   border-radius: 999px;
-  background: rgba(0, 0, 0, 0.75);
+  background: rgba(0, 0, 0, 0.8);
   border: 1px solid var(--border);
-  z-index: 20;
-  white-space: nowrap;
+  z-index: 40;
+  max-width: calc(100vw - 24px);
+  text-align: center;
 }
+
+/* ---------- Ask / raised hand ---------- */
+
+.ask-area { width: 100%; margin-top: auto; }
+
+.ask-button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 20px;
+  border: 1px solid rgba(255, 200, 87, 0.45);
+  background: linear-gradient(135deg, rgba(255, 200, 87, 0.22), rgba(255, 122, 182, 0.18));
+  color: var(--text);
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  transition: transform 120ms ease;
+}
+.ask-button:active { transform: scale(0.97); }
+.ask-button[hidden] { display: none; }
+.ask-emoji { font-size: 2.2rem; line-height: 1; }
+
+.hand-panel {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 18px;
+  border-radius: 20px;
+  background: var(--card);
+  border: 1px solid rgba(255, 200, 87, 0.45);
+  text-align: center;
+  animation: rise 320ms ease-out;
+}
+.hand-panel[hidden] { display: none; }
+.hand-panel[data-state="active"] {
+  border-color: var(--ok);
+  box-shadow: 0 0 0 1px var(--ok), 0 0 28px rgba(61, 220, 151, 0.25);
+}
+.hand-title { margin: 0; font-size: 1.25rem; font-weight: 700; }
+.hand-detail { font-size: 0.95rem; }
+.hand-panel[data-state="waiting"] .hand-title::before {
+  content: "🖐🏽";
+  display: inline-block;
+  margin-right: 8px;
+  animation: wave 2.4s ease-in-out infinite;
+  transform-origin: 70% 70%;
+}
+
+.secondary {
+  font-size: 1.05rem;
+  font-weight: 600;
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.25);
+  color: var(--text);
+}
+
+.speak-button {
+  width: 100%;
+  min-height: 112px;
+  border-radius: 22px;
+  border: 0;
+  color: #fff;
+  font-size: 1.35rem;
+  font-weight: 700;
+  background: linear-gradient(135deg, #2bb673, #1e8f9c);
+  touch-action: none;
+  -webkit-touch-callout: none;
+  transition: transform 100ms ease, box-shadow 100ms ease, filter 100ms ease;
+}
+.speak-button[hidden] { display: none; }
+.speak-button[data-state="connecting"] { filter: grayscale(0.8) brightness(0.8); }
+.speak-button[data-state="talking"] {
+  transform: scale(0.97);
+  background: linear-gradient(135deg, #ff5d73, #ff7ab6);
+  box-shadow: 0 0 0 4px rgba(255, 93, 115, 0.35), 0 0 36px rgba(255, 93, 115, 0.55);
+  animation: pulse 1.1s ease-in-out infinite;
+}
+.speak-button[data-state="blocked"],
+.speak-button[data-state="failed"],
+.speak-button[data-state="unsupported"] { background: rgba(255, 93, 115, 0.25); font-size: 1.05rem; }
+@keyframes pulse {
+  50% { box-shadow: 0 0 0 10px rgba(255, 93, 115, 0.15), 0 0 48px rgba(255, 93, 115, 0.7); }
+}
+@keyframes rise {
+  from { transform: translateY(16px); opacity: 0; }
+}
+
+.sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  background: rgba(8, 6, 20, 0.6);
+  backdrop-filter: blur(4px);
+  animation: fade 200ms ease-out;
+}
+.sheet-backdrop[hidden] { display: none; }
+.sheet {
+  width: 100%;
+  max-width: 520px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 26px 22px max(22px, env(safe-area-inset-bottom));
+  border-radius: 28px 28px 0 0;
+  background: linear-gradient(180deg, #2f2257, #1b1638);
+  border: 1px solid var(--border);
+  border-bottom: 0;
+  text-align: center;
+  animation: sheet-up 300ms cubic-bezier(0.2, 0.9, 0.3, 1.1);
+}
+.sheet h2 { margin: 0; font-size: 1.5rem; }
+.sheet-emoji { font-size: 3.4rem; line-height: 1; }
+@keyframes sheet-up { from { transform: translateY(100%); } }
+@keyframes fade { from { opacity: 0; } }
 
 .spinner {
   width: 40px;

@@ -16,14 +16,23 @@ public sealed class OverlayManager : IDisposable
     public const string AllScreens = "all";
 
     private readonly List<OverlayWindow> _windows = new();
+    private readonly List<HandsWindow> _handsWindows = new();
+    private readonly ImageSource? _handImage;
+    private IReadOnlyList<HandInfo> _hands = Array.Empty<HandInfo>();
+    private string _handsSide;
     private readonly Stopwatch _clock = Stopwatch.StartNew();
     private readonly DispatcherTimer _rebuildDebounce;
     private bool _ticking;
     private string _target;
 
-    public OverlayManager(string target)
+    public event Action<string>? HandPicked;
+    public event Action<string>? HandLowered;
+
+    public OverlayManager(string target, string handsSide, ImageSource? handImage)
     {
         _target = target;
+        _handsSide = handsSide;
+        _handImage = handImage;
         _rebuildDebounce = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _rebuildDebounce.Tick += (_, _) => { _rebuildDebounce.Stop(); Rebuild(); };
         SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
@@ -40,6 +49,26 @@ public sealed class OverlayManager : IDisposable
             _target = value;
             Rebuild();
         }
+    }
+
+    /// <summary>Which edge of the screen the raised-hands list sits on: "left" or "right".</summary>
+    public string HandsSide
+    {
+        get => _handsSide;
+        set
+        {
+            if (_handsSide == value) return;
+            _handsSide = value;
+            Rebuild();
+        }
+    }
+
+    public IReadOnlyList<HandInfo> Hands => _hands;
+
+    public void UpdateHands(IReadOnlyList<HandInfo> hands)
+    {
+        _hands = hands;
+        foreach (var w in _handsWindows) w.Update(hands);
     }
 
     public void Spawn(ImageSource? image, string fallbackText)
@@ -81,6 +110,8 @@ public sealed class OverlayManager : IDisposable
         StopTicking();
         foreach (var w in _windows) w.Close();
         _windows.Clear();
+        foreach (var w in _handsWindows) w.Close();
+        _handsWindows.Clear();
 
         var screens = Forms.Screen.AllScreens;
         var targets = screens.Where(s => s.DeviceName == _target).ToList();
@@ -91,6 +122,13 @@ public sealed class OverlayManager : IDisposable
             var window = new OverlayWindow(screen);
             window.Show();
             _windows.Add(window);
+
+            var hands = new HandsWindow(screen, _handsSide, _handImage);
+            hands.Picked += id => HandPicked?.Invoke(id);
+            hands.Lowered += id => HandLowered?.Invoke(id);
+            hands.Show();
+            hands.Update(_hands);
+            _handsWindows.Add(hands);
         }
     }
 
@@ -101,5 +139,7 @@ public sealed class OverlayManager : IDisposable
         StopTicking();
         foreach (var w in _windows) w.Close();
         _windows.Clear();
+        foreach (var w in _handsWindows) w.Close();
+        _handsWindows.Clear();
     }
 }

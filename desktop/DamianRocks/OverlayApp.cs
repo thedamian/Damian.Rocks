@@ -1,6 +1,7 @@
 using System;
 using System.Drawing;
 using System.IO;
+using System.Linq;
 using System.Windows;
 using System.Windows.Threading;
 
@@ -15,6 +16,12 @@ public sealed class OverlayApp : Application
     private OverlayManager? _overlays;
     private TrayIcon? _tray;
     private DisplayConnection? _connection;
+    private AudioReceiver? _audio;
+    private volatile string? _presenterKey;
+    private bool _presenter;
+    private string _iceServers = "[]";
+    private bool _warnedBadKey;
+    private bool _warnedAudio;
     private bool _paused;
     private bool _shuttingDown;
 
@@ -29,12 +36,22 @@ public sealed class OverlayApp : Application
     {
         base.OnStartup(e);
         _settings = Settings.Load();
+        if (_options.Key is not null)
+        {
+            _settings.PresenterKey = _options.Key; // remembered (encrypted) so --key is only needed once
+            _settings.Save();
+        }
+        _presenterKey = _settings.PresenterKey;
         _images = new ReactionImages(_options.HttpBase);
-        _overlays = new OverlayManager(_settings.Screen);
+        _overlays = new OverlayManager(_settings.Screen, _settings.HandsSide, _images.GetEmoji(ReactionImages.HandEmoji));
+        _overlays.HandPicked += PickHand;
+        _overlays.HandLowered += id => _ = _connection?.SendAsync(new { type = "lower", id });
 
         _tray = new TrayIcon(LoadAppIcon(), _options.DisplayUri.ToString())
         {
             CurrentScreen = () => _overlays.Target,
+            CurrentHandsSide = () => _overlays.HandsSide,
+            HasKey = () => _presenterKey is not null,
         };
         _tray.QuitRequested += Quit;
         _tray.TestRequested += SpawnTest;
@@ -47,11 +64,32 @@ public sealed class OverlayApp : Application
             _settings.Save();
             SpawnTest();
         };
+        _tray.HandsSideSelected += side =>
+        {
+            _overlays.HandsSide = side;
+            _settings.HandsSide = side;
+            _settings.Save();
+        };
+        _tray.KeyEntered += SetPresenterKey;
 
-        _connection = new DisplayConnection(_options.DisplayUri);
-        _connection.StateChanged += (state, detail) => Dispatcher.BeginInvoke(() => _tray?.SetState(state, detail));
+        _audio = new AudioReceiver();
+        _audio.AnswerReady += (id, sdp) => _ = _connection?.SendAsync(new { type = "rtc-answer", id, sdp });
+        _audio.StateChanged += (id, state) =>
+        {
+            if (state != "failed") return;
+            string name = _overlays?.Hands.FirstOrDefault(h => h.Id == id)?.Name ?? "the audience member";
+            _tray?.ShowWarning("Couldn't connect audio",
+                $"No audio route to {name}'s phone. Their network may need a TURN server (see README), or they can tap Speak to retry.");
+        };
+
+        _connection = new DisplayConnection(_options.DisplayUri, () => _presenterKey);
+        _connection.StateChanged += (state, detail) => Dispatcher.BeginInvoke(() => OnConnectionState(state, detail));
         _connection.AudienceChanged += count => Dispatcher.BeginInvoke(() => _tray?.SetAudience(count));
         _connection.ReactionReceived += reaction => Dispatcher.BeginInvoke(() => ShowReaction(reaction));
+        _connection.HelloReceived += (presenter, ice) => Dispatcher.BeginInvoke(() => OnHello(presenter, ice));
+        _connection.HandsChanged += hands => Dispatcher.BeginInvoke(() => _overlays?.UpdateHands(hands));
+        _connection.RtcOffer += (id, name, sdp) => Dispatcher.BeginInvoke(() => AcceptOffer(id, name, sdp));
+        _connection.RtcClose += id => Dispatcher.BeginInvoke(() => _audio?.Close(id));
         _connection.Start();
 
         if (!_settings.WelcomeShown)
@@ -73,8 +111,83 @@ public sealed class OverlayApp : Application
 
     private void SpawnTest()
     {
-        var emoji = ReactionImages.BundledEmojis[Random.Shared.Next(ReactionImages.BundledEmojis.Length)];
+        var emojis = ReactionImages.BundledEmojis.Where(e => e != ReactionImages.HandEmoji).ToArray();
+        var emoji = emojis[Random.Shared.Next(emojis.Length)];
         _overlays?.Spawn(_images?.GetEmoji(emoji), emoji);
+    }
+
+    private void OnConnectionState(ConnectionState state, string? detail)
+    {
+        _tray?.SetState(state, detail);
+        if (state == ConnectionState.Connected) return;
+        // Offline: the server will resend the queue (and any offer) when we reconnect.
+        _presenter = false;
+        _tray?.SetPresenter(null);
+        _overlays?.UpdateHands(Array.Empty<HandInfo>());
+        _audio?.Close();
+    }
+
+    private async void OnHello(bool presenter, string iceServersJson)
+    {
+        _presenter = presenter;
+        _iceServers = iceServersJson;
+        _tray?.SetPresenter(presenter);
+        if (!presenter)
+        {
+            if (_presenterKey is not null && !_warnedBadKey)
+            {
+                _warnedBadKey = true;
+                _tray?.ShowWarning("Presenter key not accepted",
+                    "The server didn't accept the saved presenter key. Right-click the tray icon → Presenter key… to fix it.");
+            }
+            return;
+        }
+        _warnedBadKey = false;
+        // Warm up the audio engine now so the first question connects quickly.
+        if (_audio is not null && !await _audio.StartAsync() && !_warnedAudio)
+        {
+            _warnedAudio = true;
+            _tray?.ShowWarning("Question audio unavailable", _audio.Error ?? "Couldn't start the audio engine.");
+        }
+    }
+
+    private void PickHand(string id)
+    {
+        if (!_presenter)
+        {
+            _tray?.ShowBalloon("Presenter key needed",
+                "To call on people, enter the server's DISPLAY_KEY (tray icon → Presenter key…).");
+            _tray?.AskForKey();
+            return;
+        }
+        _ = _connection?.SendAsync(new { type = "pick", id });
+    }
+
+    private async void AcceptOffer(string id, string name, string sdp)
+    {
+        if (_audio is null || _shuttingDown) return;
+        if (!await _audio.AcceptOfferAsync(id, sdp, _iceServers) && !_warnedAudio)
+        {
+            _warnedAudio = true;
+            _tray?.ShowWarning($"Can't play {name}'s audio", _audio.Error ?? "Couldn't start the audio engine.");
+        }
+    }
+
+    private void SetPresenterKey(string? key)
+    {
+        try
+        {
+            _settings.PresenterKey = key;
+            _settings.Save();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Couldn't save the key:\n{ex.Message}", "Damian.Rocks", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+        _presenterKey = key;
+        _warnedBadKey = false;
+        _connection?.Reconnect();
     }
 
     private void SetStartup(bool enabled)
@@ -114,6 +227,8 @@ public sealed class OverlayApp : Application
     {
         _connection?.Dispose();
         _connection = null;
+        _audio?.Dispose();
+        _audio = null;
         _tray?.Dispose();
         _tray = null;
         _overlays?.Dispose();

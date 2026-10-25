@@ -5,9 +5,14 @@ interface Reaction {
   image?: string;
 }
 
+type HandState = 'none' | 'waiting' | 'active';
+type HandReason = 'lowered' | 'ended' | 'dismissed' | 'expired' | 'full';
+
 type ServerMessage =
-  | { type: 'hello'; name: string; presenterOnline: boolean }
+  | { type: 'hello'; name: string; presenterOnline: boolean; iceServers?: RTCIceServer[] }
   | { type: 'presenter'; online: boolean }
+  | { type: 'hand'; state: HandState; position?: number; reason?: HandReason }
+  | { type: 'rtc-answer'; sdp: string }
   | { type: 'slow-down' }
   | { type: 'busy' };
 
@@ -27,6 +32,13 @@ const statusEl = $('status');
 const statusText = $('status-text');
 const toastEl = $('toast');
 const sky = $('sky');
+const askButton = $<HTMLButtonElement>('ask-button');
+const askSheet = $('ask-sheet');
+const handPanel = $('hand-panel');
+const handTitle = $('hand-title');
+const handDetail = $('hand-detail');
+const speakButton = $<HTMLButtonElement>('speak-button');
+const handDownButton = $<HTMLButtonElement>('hand-down');
 
 const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -189,9 +201,18 @@ function connect() {
     switch (msg.type) {
       case 'hello':
         presenterOnline = msg.presenterOnline;
+        if (Array.isArray(msg.iceServers)) iceServers = msg.iceServers;
+        // No hand message follows the hello if our hand isn't up (any more).
+        if (handState !== 'none') applyHand({ state: 'none' });
         break;
       case 'presenter':
         presenterOnline = msg.online;
+        break;
+      case 'hand':
+        applyHand(msg);
+        break;
+      case 'rtc-answer':
+        void onAnswer(msg.sdp);
         break;
       case 'slow-down':
         toast('Whoa, slow down! 🐢');
@@ -279,12 +300,273 @@ function setStatus(state: 'connecting' | 'connected' | 'offline' | 'blocked') {
 }
 
 let toastTimer: number | undefined;
-function toast(text: string) {
+function toast(text: string, ms = 2000) {
   toastEl.textContent = text;
   toastEl.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = window.setTimeout(() => (toastEl.hidden = true), 2000);
+  toastTimer = window.setTimeout(() => (toastEl.hidden = true), ms);
 }
+
+// ---------- Ask a question (raised hand) ----------
+
+const HAND: Reaction = { id: 'hand', label: 'Raised hand', emoji: '🖐🏽' };
+let handState: HandState = 'none';
+let iceServers: RTCIceServer[] = [{ urls: 'stun:stun.l.google.com:19302' }];
+
+function socketOpen(): WebSocket | null {
+  return socket && socket.readyState === WebSocket.OPEN ? socket : null;
+}
+
+askButton.addEventListener('click', () => {
+  if (!socketOpen()) {
+    shake(askButton);
+    toast('Reconnecting… try again in a sec');
+    return;
+  }
+  askSheet.hidden = false;
+  $('ask-yes').focus();
+});
+
+function closeSheet() {
+  askSheet.hidden = true;
+}
+$('ask-no').addEventListener('click', closeSheet);
+askSheet.addEventListener('click', (e) => {
+  if (e.target === askSheet) closeSheet();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !askSheet.hidden) closeSheet();
+});
+
+$('ask-yes').addEventListener('click', () => {
+  closeSheet();
+  const ws = socketOpen();
+  if (!ws) {
+    toast('Reconnecting… try again in a sec');
+    return;
+  }
+  ws.send(JSON.stringify({ type: 'hand', raised: true }));
+  navigator.vibrate?.(20);
+  floatUp(HAND, askButton);
+});
+
+handDownButton.addEventListener('click', () => {
+  const ws = socketOpen();
+  if (!ws) {
+    toast('Reconnecting… try again in a sec');
+    return;
+  }
+  ws.send(JSON.stringify({ type: 'hand', raised: false }));
+  // Optimistic: stop the mic right away rather than waiting for the server.
+  stopCall();
+});
+
+function applyHand(msg: { state: HandState; position?: number; reason?: HandReason }) {
+  const previous = handState;
+  handState = msg.state;
+  askButton.hidden = msg.state !== 'none';
+  handPanel.hidden = msg.state === 'none';
+  handPanel.dataset.state = msg.state;
+
+  if (msg.state === 'none') {
+    stopCall();
+    const message: Partial<Record<HandReason, string>> = {
+      ended: 'Thanks for your question! 🙌',
+      dismissed: 'The presenter lowered your hand',
+      expired: 'Your hand was lowered',
+      full: 'Too many questions right now – try again later',
+    };
+    if (msg.reason && message[msg.reason]) toast(message[msg.reason]!, 3500);
+    return;
+  }
+
+  if (msg.state === 'waiting') {
+    stopCall();
+    speakButton.hidden = true;
+    handTitle.textContent = 'Your hand is up';
+    handDetail.textContent = msg.position
+      ? `You're #${msg.position} in line. Hang tight — the presenter will call on you.`
+      : 'Hang tight — the presenter will call on you.';
+    if (previous === 'active') toast('Back in line – your hand is still up', 3000);
+    return;
+  }
+
+  handTitle.textContent = "You're on! 🎤";
+  handDetail.textContent = "Hold the button while you talk. Your voice plays on the presenter's speakers.";
+  speakButton.hidden = false;
+  if (previous !== 'active') navigator.vibrate?.([30, 60, 30]);
+  // Called on (or re-called after a reconnect / presenter switch): always start a fresh call.
+  void startCall();
+}
+
+// ---------- Push-to-talk audio (WebRTC, phone → presenter's computer) ----------
+
+type SpeakState = 'connecting' | 'ready' | 'talking' | 'blocked' | 'failed' | 'unsupported';
+let pc: RTCPeerConnection | null = null;
+let mic: MediaStream | null = null;
+let callId = 0;
+let answerTimer: number | undefined;
+let talking = false;
+
+const speakLabels: Record<SpeakState, string> = {
+  connecting: 'Connecting mic…',
+  ready: '🎙️ Hold to speak',
+  talking: '🔴 Speaking… release to stop',
+  blocked: 'Microphone blocked – tap to allow',
+  failed: "Couldn't connect – tap to retry",
+  unsupported: 'This browser can’t send audio (needs https)',
+};
+
+function setSpeak(state: SpeakState) {
+  speakButton.dataset.state = state;
+  speakButton.textContent = speakLabels[state];
+}
+
+async function startCall() {
+  const id = ++callId;
+  closePeer();
+  setSpeak('connecting');
+
+  if (!window.RTCPeerConnection || !navigator.mediaDevices?.getUserMedia) {
+    setSpeak('unsupported');
+    return;
+  }
+
+  try {
+    if (!mic || mic.getAudioTracks().every((t) => t.readyState === 'ended')) {
+      mic = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+        video: false,
+      });
+    }
+  } catch (err) {
+    if (id !== callId) return;
+    const name = err instanceof DOMException ? err.name : '';
+    setSpeak(name === 'NotAllowedError' || name === 'SecurityError' ? 'blocked' : 'failed');
+    return;
+  }
+  if (id !== callId || handState !== 'active') return;
+
+  const track = mic.getAudioTracks()[0];
+  track.enabled = false;
+  const peer = new RTCPeerConnection({ iceServers });
+  pc = peer;
+  peer.addTransceiver(track, { direction: 'sendonly', streams: [mic] });
+
+  const onState = () => {
+    if (pc !== peer) return;
+    const state = peer.connectionState ?? peer.iceConnectionState;
+    if (state === 'connected' || peer.iceConnectionState === 'connected' || peer.iceConnectionState === 'completed') {
+      clearTimeout(answerTimer);
+      if (!talking) setSpeak('ready');
+    } else if (state === 'failed') {
+      setTalking(false);
+      setSpeak('failed');
+    }
+  };
+  peer.addEventListener('connectionstatechange', onState);
+  peer.addEventListener('iceconnectionstatechange', onState);
+
+  try {
+    await peer.setLocalDescription(await peer.createOffer());
+    await iceGatheringDone(peer, 3000);
+  } catch {
+    if (pc === peer) setSpeak('failed');
+    return;
+  }
+  const ws = socketOpen();
+  const sdp = peer.localDescription?.sdp;
+  if (pc !== peer || !ws || !sdp) return; // a reconnect will start a fresh call
+  ws.send(JSON.stringify({ type: 'rtc-offer', sdp }));
+  clearTimeout(answerTimer);
+  answerTimer = window.setTimeout(() => {
+    if (pc === peer && speakButton.dataset.state === 'connecting') setSpeak('failed');
+  }, 15000);
+}
+
+function iceGatheringDone(peer: RTCPeerConnection, timeoutMs: number): Promise<void> {
+  if (peer.iceGatheringState === 'complete') return Promise.resolve();
+  return new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      peer.removeEventListener('icegatheringstatechange', check);
+      resolve();
+    };
+    const check = () => {
+      if (peer.iceGatheringState === 'complete') done();
+    };
+    const timer = window.setTimeout(done, timeoutMs);
+    peer.addEventListener('icegatheringstatechange', check);
+  });
+}
+
+async function onAnswer(sdp: string) {
+  const peer = pc;
+  if (!peer || peer.signalingState !== 'have-local-offer' || typeof sdp !== 'string') return;
+  try {
+    await peer.setRemoteDescription({ type: 'answer', sdp });
+  } catch {
+    if (pc === peer) setSpeak('failed');
+  }
+}
+
+function closePeer() {
+  clearTimeout(answerTimer);
+  setTalking(false);
+  const peer = pc;
+  pc = null;
+  peer?.close();
+}
+
+/** Hangs up and releases the microphone (so the phone's "mic in use" indicator goes away). */
+function stopCall() {
+  callId++;
+  closePeer();
+  mic?.getTracks().forEach((t) => t.stop());
+  mic = null;
+}
+
+function setTalking(on: boolean) {
+  if (talking === on) return;
+  talking = on;
+  mic?.getAudioTracks().forEach((t) => (t.enabled = on));
+  socketOpen()?.send(JSON.stringify({ type: 'talking', on }));
+  if (on) {
+    navigator.vibrate?.(15);
+    setSpeak('talking');
+  } else if (speakButton.dataset.state === 'talking') {
+    setSpeak('ready');
+  }
+}
+
+speakButton.addEventListener('pointerdown', (e) => {
+  if (speakButton.dataset.state !== 'ready') return;
+  e.preventDefault();
+  speakButton.setPointerCapture(e.pointerId);
+  setTalking(true);
+});
+for (const type of ['pointerup', 'pointercancel', 'lostpointercapture'] as const) {
+  speakButton.addEventListener(type, () => setTalking(false));
+}
+speakButton.addEventListener('contextmenu', (e) => e.preventDefault());
+speakButton.addEventListener('click', () => {
+  const state = speakButton.dataset.state;
+  // Retrying from a tap counts as a user gesture, which some browsers need for the mic prompt.
+  if (state === 'blocked' || state === 'failed') void startCall();
+});
+speakButton.addEventListener('keydown', (e) => {
+  if ((e.key === ' ' || e.key === 'Enter') && !e.repeat && speakButton.dataset.state === 'ready') {
+    e.preventDefault();
+    setTalking(true);
+  }
+});
+speakButton.addEventListener('keyup', (e) => {
+  if (e.key === ' ' || e.key === 'Enter') setTalking(false);
+});
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') setTalking(false);
+});
+window.addEventListener('blur', () => setTalking(false));
 
 // ---------- Floating animation ----------
 

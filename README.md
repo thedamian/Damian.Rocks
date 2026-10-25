@@ -17,12 +17,12 @@ Two projects that work together:
 cd server
 npm install
 npm run build
-PORT=3000 npm start          # http://localhost:3000
+PORT=3002 npm start          # http://localhost:3002
 ```
 
-- **`/`** — mobile app. It asks for your name the first time and saves it in a cookie (`dr_name`, 1 year) so returning visitors are remembered. Tapping an emoji floats it up your phone screen and sends it to the presenter.
+- **`/`** — mobile app. It asks for your name the first time and saves it in a cookie (`dr_name`, 1 year) so returning visitors are remembered. Tapping an emoji floats it up your phone screen and sends it to the presenter. The full‑width **🖐🏽 Ask** row at the bottom raises your hand (see [Audience questions](#audience-questions-qa)).
 - **`/ws`** — audience WebSocket. You need the name cookie and a same‑origin request to connect. See [Flood protection](#flood-protection) for limits.
-- **`/display`** — WebSocket for the desktop overlay. It only receives reactions; anything the overlay sends is ignored.
+- **`/display`** — WebSocket for the desktop overlay. It receives reactions and the raised‑hands list. Only a display that sends the presenter key (`Authorization: Bearer <DISPLAY_KEY>`) can call on people and receive their audio.
 - **`/healthz`** — returns JSON with audience, display, socket, IP and banned‑IP counts.
 
 The reaction list lives in `src/server/reactions.ts`. To add a custom image, put a PNG in `public/reactions/` and add `{ id, label, image: '/reactions/x.png' }`. The overlay downloads it by URL.
@@ -47,6 +47,26 @@ All limits are token buckets (a burst size, then a steady refill) defined in `sr
 
 **Real client IP:** `X-Forwarded-For` is honored only when the request comes from a trusted proxy (`TRUST_PROXY`, default `loopback`, which matches Caddy on the same machine). In that case, the server uses the right‑most untrusted hop. Set `TRUST_PROXY=none` if Node is exposed directly, or set it to a comma‑separated list of proxy IPs.
 
+### Audience questions (Q&A)
+
+1. In the audience, someone taps **🖐🏽 Ask**, then **Yes, raise my hand**. Their phone shows their place in line and a **Hand down** button that withdraws the question.
+2. On the presenter's screen, a card with their name joins the **QUESTIONS** list. The list sits in the outer strip on the right (or left) edge, never in the middle.
+3. The presenter clicks a card. That card grows a little and glows, and a **Hold to speak** button appears on that person's phone. While they hold it, their phone's mic streams over **WebRTC** straight to the presenter's PC and plays through its speakers. The card shows *Speaking…* while they talk.
+4. The presenter clicks **End** on the card. This hangs up, lowers their hand and thanks them. Clicking a different card hands the mic to that person instead. The ✕ on a waiting card dismisses that question.
+
+| Env var | Default | Meaning |
+|---|---|---|
+| `DISPLAY_KEY` | *(unset)* | Presenter key. Give the desktop app the same value (`--key`). If unset, only a desktop app on the **same machine** as the server can take questions. **Set it in production.** |
+| `ICE_SERVERS` | Google STUN | JSON array of `RTCIceServer` objects |
+| `TURN_URLS`, `TURN_SECRET` | *(unset)* | coturn `use-auth-secret` TURN relay. Per‑user credentials are minted automatically. This is recommended for venue Wi‑Fi or cellular data, where direct peer‑to‑peer connections often fail. |
+| `MAX_HANDS` / `MAX_HANDS_PER_IP` | 100 / 10 | Queue limits |
+| `HAND_GRACE_SECONDS` | 90 | How long a raised hand survives its phone being disconnected |
+
+Notes:
+- The audio is peer‑to‑peer between the phone and the presenter's PC; the server only relays the handshake. Phones only allow mic access over **HTTPS**, which Caddy provides.
+- Push‑to‑talk keeps feedback down. Still, if the person asking is sitting right next to the room speakers, ask them to hold the phone close and speak normally.
+- Rate limiting covers questions too: raising and lowering a hand counts against the same per‑connection message limits.
+
 ### Deploying to Linux
 
 1. Copy `server/` to `/opt/damian-rocks/server`, then run `npm ci && npm run build` (needs Node ≥ 20.11).
@@ -65,22 +85,32 @@ Run `DamianRocks.exe`. It goes to the system tray (the notification‑area drawe
 To point it at a different server, for example while testing:
 
 ```powershell
-DamianRocks.exe --server localhost:3000           # -> ws://localhost:3000/display
-DamianRocks.exe --server http://192.168.1.20:3000
+DamianRocks.exe --server localhost:3002           # -> ws://localhost:3002/display
+DamianRocks.exe --server http://192.168.1.20:3002
 DamianRocks.exe --server wss://staging.example.com/display
 ```
 
+To take audience questions, give the app the server's `DISPLAY_KEY` once. It's saved encrypted (Windows DPAPI) for your user account:
+
+```powershell
+DamianRocks.exe --key a-long-random-secret
+```
+
+You can also set it from the tray menu: **Presenter key…**. Question audio plays through a hidden Microsoft Edge **WebView2** instance. WebView2 is built into Windows 11; on Windows 10 you may need to [install the runtime](https://go.microsoft.com/fwlink/p/?LinkId=2124703).
+
 The tray icon is gray while disconnected. Right‑click it for:
 
-- the connection status and audience count
+- the connection status, audience count and whether this PC is the **presenter** or **view only** (wrong or missing key)
 - **Show on**: all screens or one particular monitor (handy for a projector)
+- **Questions on**: put the raised‑hands list on the left or right edge
 - **Pause reactions**
 - **Send test emoji** (double‑clicking the icon does the same)
 - **Start with Windows**
+- **Presenter key…**
 - **Quit**
 
 Each reaction floats up from the bottom of the screen, randomly on the left or right side. It sways gently like a leaf on a slow breeze and bobs a little as it rises. The whole emoji, sway included, always stays inside the outer 10% of the screen on its side, so the middle stays clear. The overlay is click‑through and never takes focus.
 
-Settings and the error log are saved in `%APPDATA%\DamianRocks\`.
+Settings, the error log and the question‑audio log (`audio.log`) are saved in `%APPDATA%\DamianRocks\`.
 
 Emoji artwork comes from [Noto Emoji](https://github.com/googlefonts/noto-emoji) (Apache 2.0; see `desktop/DamianRocks/Assets/Emoji/NOTO-LICENSE.txt`). WPF can't render color emoji fonts, which is why the images are bundled.

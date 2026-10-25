@@ -38,9 +38,27 @@
         <p id="status" class="status" data-state="connecting"><span class="dot"></span><span id="status-text">Connecting…</span></p>
         <div id="grid" class="grid" role="group" aria-label="Reactions"></div>
         <p class="muted hint">Tap an emoji to send it to the big screen</p>
+        <div class="ask-area">
+          <button id="ask-button" type="button" class="ask-button"><span class="ask-emoji" aria-hidden="true">🖐🏽</span> Ask</button>
+          <div id="hand-panel" class="hand-panel" data-state="waiting" hidden>
+            <p id="hand-title" class="hand-title"></p>
+            <p id="hand-detail" class="muted hand-detail"></p>
+            <button id="speak-button" type="button" class="speak-button" data-state="connecting" hidden>Connecting mic…</button>
+            <button id="hand-down" type="button" class="secondary">Hand down</button>
+          </div>
+        </div>
         <p id="toast" class="toast" role="status" hidden></p>
       </section>
     </main>
+    <div id="ask-sheet" class="sheet-backdrop" hidden>
+      <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="ask-title">
+        <div class="sheet-emoji" aria-hidden="true">🖐🏽</div>
+        <h2 id="ask-title">Ask a question?</h2>
+        <p class="muted">Your name will appear on the presenter's screen. If they call on you, hold a button on your phone to talk — your voice comes out of the presenter's speakers.</p>
+        <button id="ask-yes" type="button" class="primary">Yes, raise my hand</button>
+        <button id="ask-no" type="button" class="link">Not now</button>
+      </div>
+    </div>
     <div id="sky" aria-hidden="true"></div>
   </body>
 </html>

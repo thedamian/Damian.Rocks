@@ -7,7 +7,7 @@ import { Protection } from './protection.js';
 import { REACTIONS } from './reactions.js';
 import { getSession, ID_COOKIE, isSecureRequest, NAME_COOKIE, sanitizeName, sessionCookie } from './session.js';
 
-const PORT = Number(process.env.PORT ?? 3000);
+const PORT = Number(process.env.PORT ?? 3002);
 const HOST = process.env.HOST ?? '0.0.0.0';
 const PUBLIC_DIR = path.resolve(import.meta.dirname, '..', 'public');
 
@@ -30,6 +30,7 @@ const SECURITY_HEADERS: Record<string, string> = {
   'X-Content-Type-Options': 'nosniff',
   'Referrer-Policy': 'no-referrer',
   'X-Frame-Options': 'DENY',
+  'Permissions-Policy': 'microphone=(self), camera=(), geolocation=()',
   'Content-Security-Policy':
     "default-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data:; style-src 'self'; script-src 'self'; frame-ancestors 'none'",
 };

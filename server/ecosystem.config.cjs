@@ -10,9 +10,13 @@ module.exports = {
       max_memory_restart: '300M',
       env: {
         NODE_ENV: 'production',
-        PORT: 3000,
+        PORT: 3002,
         HOST: '127.0.0.1', // only Caddy talks to Node; use 0.0.0.0 if exposed directly
         TRUST_PROXY: 'loopback', // set to 'none' if there is no reverse proxy
+        // Q&A: the desktop app needs this key (DamianRocks.exe --key ...) to call on people and hear them.
+        // Better: `DISPLAY_KEY=... pm2 start ecosystem.config.cjs --update-env` so the secret isn't in git.
+        // DISPLAY_KEY: 'a-long-random-secret',
+        // TURN_URLS: 'turn:turn.damian.rocks:3478', TURN_SECRET: '...',  // optional, see README
         // RL_IP_BURST: 15, RL_IP_PER_SEC: 4, BAN_SECONDS: 300, ...see README
       },
     },

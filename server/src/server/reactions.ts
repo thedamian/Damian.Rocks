@@ -17,8 +17,8 @@ export const REACTIONS: readonly Reaction[] = [
   { id: 'thumbs-down', label: 'Thumbs down', emoji: '👎🏽' },
   { id: 'poop', label: 'Poop', emoji: '💩' },
   { id: 'question', label: 'Question', emoji: '❓' },
-  { id: 'hand', label: 'Raised hand', emoji: '🖐🏽' },
 ];
+// 🖐🏽 isn't a reaction any more: it's the "Ask" button (see questions.ts).
 
 const byId = new Map(REACTIONS.map((r) => [r.id, r]));
 

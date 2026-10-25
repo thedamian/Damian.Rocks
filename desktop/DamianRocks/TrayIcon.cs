@@ -15,19 +15,26 @@ public sealed class TrayIcon : IDisposable
     private readonly ToolStripMenuItem _screens = new("Show on");
     private readonly ToolStripMenuItem _pause = new("Pause reactions") { CheckOnClick = true };
     private readonly ToolStripMenuItem _startup = new("Start with Windows") { CheckOnClick = true };
+    private readonly ToolStripMenuItem _handsSide = new("Questions on");
+    private readonly ToolStripMenuItem _key = new("Presenter key…");
     private readonly Icon _onlineIcon, _offlineIcon;
     private readonly string _server;
     private ConnectionState _state = ConnectionState.Connecting;
     private string? _detail;
     private int _audience;
+    private bool? _presenter;
 
     public event Action? QuitRequested;
     public event Action? TestRequested;
     public event Action<bool>? PauseChanged;
     public event Action<bool>? StartupChanged;
     public event Action<string>? ScreenSelected;
+    public event Action<string>? HandsSideSelected;
+    public event Action<string?>? KeyEntered;
 
     public Func<string> CurrentScreen { get; set; } = () => OverlayManager.AllScreens;
+    public Func<string> CurrentHandsSide { get; set; } = () => HandsWindow.SideRight;
+    public Func<bool> HasKey { get; set; } = () => false;
 
     public TrayIcon(Icon appIcon, string server)
     {
@@ -44,12 +51,15 @@ public sealed class TrayIcon : IDisposable
         _startup.Click += (_, _) => StartupChanged?.Invoke(_startup.Checked);
         _screens.DropDownItems.Add("(loading)");
         _screens.DropDownOpening += (_, _) => BuildScreenMenu();
+        _handsSide.DropDownItems.Add("(loading)");
+        _handsSide.DropDownOpening += (_, _) => BuildHandsSideMenu();
+        _key.Click += (_, _) => AskForKey();
         _menu.Opening += (_, _) => _startup.Checked = StartupRegistration.IsEnabled;
 
         _menu.Items.AddRange(new ToolStripItem[]
         {
             title, serverItem, _status, new ToolStripSeparator(),
-            _screens, _pause, test, _startup, new ToolStripSeparator(),
+            _screens, _handsSide, _pause, test, _startup, _key, new ToolStripSeparator(),
             quit,
         });
 
@@ -72,7 +82,34 @@ public sealed class TrayIcon : IDisposable
         UpdateText();
     }
 
+    /// <summary>Whether the server accepted this PC as the presenter (null = not known yet).</summary>
+    public void SetPresenter(bool? presenter)
+    {
+        _presenter = presenter;
+        UpdateText();
+    }
+
     public void ShowBalloon(string title, string text) => _notify.ShowBalloonTip(5000, title, text, ToolTipIcon.Info);
+
+    public void ShowWarning(string title, string text) => _notify.ShowBalloonTip(8000, title, text, ToolTipIcon.Warning);
+
+    public void AskForKey()
+    {
+        using var dialog = new KeyDialog(HasKey());
+        if (dialog.ShowDialog() == DialogResult.OK) KeyEntered?.Invoke(dialog.Key);
+    }
+
+    private void BuildHandsSideMenu()
+    {
+        _handsSide.DropDownItems.Clear();
+        string current = CurrentHandsSide();
+        foreach (var (label, side) in new[] { ("Left side", HandsWindow.SideLeft), ("Right side", HandsWindow.SideRight) })
+        {
+            var item = new ToolStripMenuItem(label) { Checked = current == side };
+            item.Click += (_, _) => HandsSideSelected?.Invoke(side);
+            _handsSide.DropDownItems.Add(item);
+        }
+    }
 
     private void UpdateText()
     {
@@ -82,6 +119,8 @@ public sealed class TrayIcon : IDisposable
             ConnectionState.Connecting => "○ Connecting…",
             _ => $"○ Disconnected: {_detail}",
         };
+        if (_state == ConnectionState.Connected && _presenter is bool presenter)
+            status += presenter ? " · presenter" : " · view only";
         if (_pause.Checked) status += " (paused)";
         _status.Text = status;
 
@@ -133,6 +172,54 @@ public sealed class TrayIcon : IDisposable
         IntPtr hIcon = gray.GetHicon();
         try { return (Icon)Icon.FromHandle(hIcon).Clone(); }
         finally { NativeMethods.DestroyIcon(hIcon); }
+    }
+
+    /// <summary>A tiny "enter the presenter key" dialog.</summary>
+    private sealed class KeyDialog : Form
+    {
+        private readonly TextBox _box = new() { UseSystemPasswordChar = true, Width = 380 };
+
+        public string? Key { get; private set; }
+
+        public KeyDialog(bool hasKey)
+        {
+            Text = "Damian.Rocks — presenter key";
+            FormBorderStyle = FormBorderStyle.FixedDialog;
+            StartPosition = FormStartPosition.CenterScreen;
+            MaximizeBox = false;
+            MinimizeBox = false;
+            TopMost = true;
+            AutoScaleMode = AutoScaleMode.Dpi;
+            AutoSize = true;
+            AutoSizeMode = AutoSizeMode.GrowAndShrink;
+            Padding = new Padding(12);
+
+            var label = new Label
+            {
+                AutoSize = true,
+                MaximumSize = new Size(380, 0),
+                Text = "Enter the server's DISPLAY_KEY so this PC can call on audience questions and play their audio." +
+                       (hasKey ? "\n\nA key is already saved. Leave the box empty and press OK to remove it." : ""),
+                Margin = new Padding(0, 0, 0, 8),
+            };
+            var show = new CheckBox { Text = "Show key", AutoSize = true };
+            show.CheckedChanged += (_, _) => _box.UseSystemPasswordChar = !show.Checked;
+            var ok = new Button { Text = "OK", DialogResult = DialogResult.OK, AutoSize = true };
+            var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, AutoSize = true };
+            var buttons = new FlowLayoutPanel { FlowDirection = FlowDirection.RightToLeft, AutoSize = true, Dock = DockStyle.Fill };
+            buttons.Controls.Add(cancel);
+            buttons.Controls.Add(ok);
+            var layout = new TableLayoutPanel { ColumnCount = 1, AutoSize = true, Dock = DockStyle.Fill };
+            layout.Controls.Add(label);
+            layout.Controls.Add(_box);
+            layout.Controls.Add(show);
+            layout.Controls.Add(buttons);
+            Controls.Add(layout);
+            AcceptButton = ok;
+            CancelButton = cancel;
+            ok.Click += (_, _) => Key = string.IsNullOrWhiteSpace(_box.Text) ? null : _box.Text.Trim();
+            Shown += (_, _) => { Activate(); _box.Focus(); };
+        }
     }
 
     public void Dispose()
